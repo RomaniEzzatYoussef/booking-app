@@ -1,13 +1,13 @@
-import {Component, EventEmitter, OnInit, Output} from '@angular/core';
+import {Component, EventEmitter, Input, OnInit, Output} from '@angular/core';
 import {ActionSheetController, AlertController, ModalController} from '@ionic/angular';
 import {MapModalComponent} from '../../map-modal/map-modal.component';
 import {HttpClient} from '@angular/common/http';
 import {environment} from '../../../../environments/environment';
 import {map, switchMap} from 'rxjs/operators';
-import {createConsoleLogServer} from '@ionic/angular-toolkit/builders/cordova-serve/log-server';
-import {PlaceLocation} from '../../../places/location.model';
+import {Coordinates, PlaceLocation} from '../../../places/location.model';
 import {of} from 'rxjs';
-import {Capacitor} from '@capacitor/core';
+import {Capacitor, Plugins} from '@capacitor/core';
+import {fakeAsync} from '@angular/core/testing';
 
 @Component({
   selector: 'app-location-picker',
@@ -16,6 +16,7 @@ import {Capacitor} from '@capacitor/core';
 })
 export class LocationPickerComponent implements OnInit {
     @Output() locationPick = new EventEmitter<PlaceLocation>();
+    @Input() showPreview = false;
     selectedLocationImage: string;
     isLoading = false;
 
@@ -56,9 +57,30 @@ export class LocationPickerComponent implements OnInit {
 
   private locateUser() {
       if (Capacitor.isPluginAvailable('Geolocation')) {
-          this.alertController.create({header: 'Could not fetch location', })
+          this.showErrorAlert();
           return;
       }
+      this.isLoading = true;
+      Plugins.Geolocation.getCurrentPosition()
+          .then(geoPosition => {
+              const coordinates: Coordinates = {lat: geoPosition.coords.latitude, lng: geoPosition.coords.longitude};
+              this.createPlace(coordinates.lat, coordinates.lng);
+              this.isLoading = false;
+          })
+          .catch(error => {
+              this.isLoading = false;
+              this.showErrorAlert();
+          });
+  }
+
+  private showErrorAlert() {
+      this.alertController.create({
+          header: 'Could not fetch location',
+          message: 'Please use the map to pick a location!',
+          buttons: ['Okay']
+      }).then(alertEl => {
+          alertEl.present();
+      });
   }
 
   private getMapImage(lat: number, lng: number, zoom: number) {
@@ -75,26 +97,34 @@ export class LocationPickerComponent implements OnInit {
               if (!modalData.data) {
                   return;
               }
-              const pickedLocation: PlaceLocation = {
+              const coordinates: Coordinates = {
                   lat: modalData.data.lat,
-                  lng: modalData.data.lng,
-                  address: null,
-                  staticMapImageUrl: null
-              };
-              this.isLoading = true;
-              this.getAddress(modalData.data.lat, modalData.data.lng)
-                  .pipe(switchMap(address => {
-                          pickedLocation.address = address;
-                          return of(this.getMapImage(pickedLocation.lat, pickedLocation.lng, 14));
-                      })
-                  ).subscribe(staticMapImageUrl => {
-                  pickedLocation.staticMapImageUrl = staticMapImageUrl;
-                  this.selectedLocationImage = staticMapImageUrl;
-                  this.isLoading = false;
-                  this.locationPick.emit(pickedLocation);
-              });
+                  lng: modalData.data.lng
+             };
+              this.createPlace(coordinates.lat, coordinates.lng);
           });
           modalEl.present();
+      });
+  }
+
+  createPlace(lat: number, lng: number) {
+      const pickedLocation: PlaceLocation = {
+          lat,
+          lng,
+          address: null,
+          staticMapImageUrl: null
+      };
+      this.isLoading = true;
+      this.getAddress(lat, lng)
+          .pipe(switchMap(address => {
+                  pickedLocation.address = address;
+                  return of(this.getMapImage(pickedLocation.lat, pickedLocation.lng, 14));
+              })
+          ).subscribe((staticMapImageUrl: string) => {
+          pickedLocation.staticMapImageUrl = staticMapImageUrl;
+          this.selectedLocationImage = staticMapImageUrl;
+          this.isLoading = false;
+          this.locationPick.emit(pickedLocation);
       });
   }
 
